@@ -45,6 +45,9 @@ public class MenuCommand : ViewModelCommand<ApplicationViewModel>
             case "Views_ImageMerger":
                 Helper.OpenWindow<AdonisWindow>("Image Merger", () => new ImageMerger().Show());
                 break;
+            case "Packages_MissingAssets":
+                Helper.OpenWindow<AdonisWindow>("Missing Asset Extractor", () => new MissingAssetExtractor().Show());
+                break;
             case "Settings":
                 Helper.OpenWindow<AdonisWindow>("Settings", () => new SettingsView().Show());
                 break;

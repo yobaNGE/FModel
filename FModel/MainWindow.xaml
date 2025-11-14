@@ -94,6 +94,15 @@
                         </Viewbox>
                     </MenuItem.Icon>
                 </MenuItem>
+                <MenuItem Header="Missing Asset Extractor" IsEnabled="{Binding Status.IsReady}" Command="{Binding MenuCommand}" CommandParameter="Packages_MissingAssets">
+                    <MenuItem.Icon>
+                        <Viewbox Width="16" Height="16">
+                            <Canvas Width="24" Height="24">
+                                <Path Fill="{DynamicResource {x:Static adonisUi:Brushes.ForegroundBrush}}" Data="{StaticResource SaveIcon}" />
+                            </Canvas>
+                        </Viewbox>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Favorite Directories" ItemsSource="{Binding CustomDirectories.Directories}" IsEnabled="{Binding Status.IsReady}">
                     <MenuItem.Icon>
                         <Viewbox Width="16" Height="16">
