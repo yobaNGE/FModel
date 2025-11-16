@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -14,9 +15,27 @@ public class MissingAssetExtractorViewModel : ViewModel
 {
     private const string DefaultStatusMessage = "Paste asset property JSON paths (one per line) or log entries that contain missing assets, then choose Extract.";
     private static readonly Regex MissingAssetRegex = new("Missing asset:\\s*(?<path>.+?)(?:\\s*\\(|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
+    private static readonly FileExtensionOption[] BuiltInExtensionOptions =
+    {
+        new("Assets (.uasset)", new[] { ".uasset" }),
+        new("Maps (.umap / .map)", new[] { ".umap", ".map" }),
+        new("Assets → Maps (.uasset, .umap, .map)", new[] { ".uasset", ".umap", ".map" }),
+        new("Common asset files (.uasset, .umap, .map, .uexp, .ubulk, .locres)", new[] { ".uasset", ".umap", ".map", ".uexp", ".ubulk", ".locres" })
+    };
+    private static readonly string[] ExtensionHintTokens = BuiltInExtensionOptions
+        .SelectMany(option => option.Extensions)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
     private readonly ApplicationViewModel _applicationView = ApplicationService.ApplicationView;
     private readonly ThreadWorkerViewModel _threadWorkerView = ApplicationService.ThreadWorkerView;
+
+    private readonly IReadOnlyList<FileExtensionOption> _extensionOptions;
+
+    public MissingAssetExtractorViewModel()
+    {
+        _extensionOptions = Array.AsReadOnly(BuiltInExtensionOptions);
+        _selectedExtensionOption = _extensionOptions.Count > 2 ? _extensionOptions[2] : _extensionOptions[0];
+    }
 
     private string _inputText = string.Empty;
     public string InputText
@@ -40,6 +59,25 @@ public class MissingAssetExtractorViewModel : ViewModel
     }
 
     public ObservableCollection<MissingAssetExtractionResult> Results { get; } = new();
+
+    public IReadOnlyList<FileExtensionOption> ExtensionOptions => _extensionOptions;
+
+    private FileExtensionOption _selectedExtensionOption;
+    public FileExtensionOption SelectedExtensionOption
+    {
+        get => _selectedExtensionOption;
+        set
+        {
+            if (_extensionOptions.Count == 0)
+            {
+                SetProperty(ref _selectedExtensionOption, value);
+                return;
+            }
+
+            var fallback = _extensionOptions[0];
+            SetProperty(ref _selectedExtensionOption, value ?? fallback);
+        }
+    }
 
     public void Reset()
     {
@@ -77,6 +115,7 @@ public class MissingAssetExtractorViewModel : ViewModel
         StatusMessage = "Exporting properties for the detected assets...";
 
         var extractionResults = new List<MissingAssetExtractionResult>();
+        var selectedExtensions = SelectedExtensionOption?.Extensions ?? Array.Empty<string>();
         try
         {
             await _threadWorkerView.Begin(cancellationToken =>
@@ -85,20 +124,20 @@ public class MissingAssetExtractorViewModel : ViewModel
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    if (!TryResolveGameFile(request.AssetPath, out var gameFile, out var error))
+                    if (!TryResolveGameFile(request, selectedExtensions, out var gameFile, out var resolvedAssetPath, out var error))
                     {
-                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, request.AssetPath, false, error));
+                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, resolvedAssetPath, false, error));
                         continue;
                     }
 
                     try
                     {
                         _applicationView.CUE4Parse.Extract(cancellationToken, gameFile, _applicationView.CUE4Parse.TabControl.HasNoTabs, EBulkType.Properties | EBulkType.Auto);
-                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, request.AssetPath, true, "Exported properties (.json)."));
+                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, resolvedAssetPath, true, "Exported properties (.json)."));
                     }
                     catch (Exception e)
                     {
-                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, request.AssetPath, false, e.Message));
+                        extractionResults.Add(new MissingAssetExtractionResult(request.OriginalPath, resolvedAssetPath, false, e.Message));
                     }
                 }
             });
@@ -158,27 +197,30 @@ public class MissingAssetExtractorViewModel : ViewModel
                 continue;
             }
 
-            if (!TryNormalizePath(rawPath, out var normalizedPath, out var errorMessage))
+
+            if (!TryNormalizePath(rawPath, out var normalizedBasePath, out var providedExtension, out var errorMessage))
             {
                 failures.Add(new MissingAssetExtractionResult(rawPath, string.Empty, false, errorMessage));
                 continue;
             }
 
-            if (!seen.Add(normalizedPath))
+            var dedupeKey = providedExtension == null ? normalizedBasePath : normalizedBasePath + providedExtension;
+            if (!seen.Add(dedupeKey))
             {
                 continue;
             }
 
-            requests.Add(new MissingAssetRequest(rawPath, normalizedPath));
+            requests.Add(new MissingAssetRequest(rawPath, normalizedBasePath, providedExtension));
         }
 
         return requests;
     }
 
-    private static bool TryNormalizePath(string rawPath, out string normalizedPath, out string errorMessage)
+    private static bool TryNormalizePath(string rawPath, out string normalizedBasePath, out string? providedExtension, out string errorMessage)
     {
-        normalizedPath = string.Empty;
+        normalizedBasePath = string.Empty;
         errorMessage = string.Empty;
+        providedExtension = null;
 
         if (string.IsNullOrWhiteSpace(rawPath))
         {
@@ -220,21 +262,43 @@ public class MissingAssetExtractorViewModel : ViewModel
             return false;
         }
 
-        if (!cleaned.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase) &&
-            !cleaned.EndsWith(".umap", StringComparison.OrdinalIgnoreCase))
+        cleaned = cleaned.TrimEnd('/');
+
+        var extension = Path.GetExtension(cleaned);
+        if (!string.IsNullOrEmpty(extension))
         {
-            cleaned += ".uasset";
+            providedExtension = extension;
+            cleaned = cleaned[..^extension.Length];
         }
 
-        normalizedPath = cleaned;
+        cleaned = cleaned.TrimEnd('.');
+
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            errorMessage = "The detected path could not be converted to a valid asset path.";
+            return false;
+        }
+
+        normalizedBasePath = cleaned;
         return true;
     }
 
     private static bool LooksLikeAssetReference(string value)
     {
-        return value.Contains(".json", StringComparison.OrdinalIgnoreCase)
-               || value.Contains(".uasset", StringComparison.OrdinalIgnoreCase)
-               || value.Contains(".umap", StringComparison.OrdinalIgnoreCase);
+        if (value.Contains(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (var extension in ExtensionHintTokens)
+        {
+            if (value.Contains(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string RemoveDuplicatePluginFolder(string cleaned)
@@ -287,10 +351,81 @@ public class MissingAssetExtractorViewModel : ViewModel
         return string.Join('/', keptSegments);
     }
 
-    private bool TryResolveGameFile(string assetPath, out GameFile gameFile, out string errorMessage)
+    private bool TryResolveGameFile(MissingAssetRequest request, IReadOnlyList<string> preferredExtensions, out GameFile gameFile, out string resolvedAssetPath, out string errorMessage)
     {
         errorMessage = string.Empty;
+        var candidates = BuildCandidatePaths(request, preferredExtensions);
 
+        foreach (var candidate in candidates)
+        {
+            if (TryGetGameFile(candidate, out gameFile))
+            {
+                resolvedAssetPath = gameFile.Path;
+                return true;
+            }
+        }
+
+        gameFile = null;
+        resolvedAssetPath = candidates.Count > 0
+            ? candidates[0]
+            : request.AssetBasePath + (request.ProvidedExtension ?? string.Empty);
+
+        errorMessage = request.ProvidedExtension != null
+            ? "Asset was not found in the mounted game files."
+            : BuildMissingExtensionError(preferredExtensions);
+        return false;
+    }
+
+    private static List<string> BuildCandidatePaths(MissingAssetRequest request, IReadOnlyList<string> preferredExtensions)
+    {
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrEmpty(request.ProvidedExtension))
+        {
+            AddCandidate(candidates, seen, request.AssetBasePath + request.ProvidedExtension);
+        }
+
+        if (preferredExtensions.Count == 0)
+        {
+            if (candidates.Count == 0)
+            {
+                AddCandidate(candidates, seen, request.AssetBasePath);
+            }
+
+            return candidates;
+        }
+
+        foreach (var extension in preferredExtensions)
+        {
+            var normalizedExtension = NormalizeExtension(extension);
+            if (string.IsNullOrEmpty(normalizedExtension))
+            {
+                continue;
+            }
+
+            AddCandidate(candidates, seen, request.AssetBasePath + normalizedExtension);
+        }
+
+        if (candidates.Count == 0)
+        {
+            AddCandidate(candidates, seen, request.AssetBasePath);
+        }
+
+        return candidates;
+    }
+
+    private static void AddCandidate(ICollection<string> candidates, ISet<string> seen, string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) || !seen.Add(candidate))
+        {
+            return;
+        }
+        candidates.Add(candidate);
+    }
+
+    private bool TryGetGameFile(string assetPath, out GameFile gameFile)
+    {
         if (_applicationView.CUE4Parse.Provider.Files.TryGetValue(assetPath, out gameFile))
         {
             return true;
@@ -300,16 +435,39 @@ public class MissingAssetExtractorViewModel : ViewModel
         gameFile = _applicationView.CUE4Parse.Provider.Files.Values
             .FirstOrDefault(file => file.Path.Equals(assetPath, StringComparison.OrdinalIgnoreCase));
 
-        if (gameFile != null)
-        {
-            return true;
-        }
-
-        errorMessage = "Asset was not found in the mounted game files.";
-        return false;
+        return gameFile != null;
     }
 
-    private readonly record struct MissingAssetRequest(string OriginalPath, string AssetPath);
+    private static string BuildMissingExtensionError(IReadOnlyList<string> preferredExtensions)
+    {
+        if (preferredExtensions.Count == 0)
+        {
+            return "Asset was not found in the mounted game files.";
+        }
+
+        var normalized = preferredExtensions
+            .Select(NormalizeExtension)
+            .Where(extension => !string.IsNullOrEmpty(extension))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return normalized.Length == 0
+            ? "Asset was not found in the mounted game files."
+            : $"Asset was not found in the mounted game files. Extensions tried: {string.Join(", ", normalized)}.";
+    }
+
+    private static string NormalizeExtension(string extension)
+    {
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = extension.Trim();
+        return trimmed.StartsWith(".", StringComparison.Ordinal) ? trimmed : $".{trimmed}";
+    }
+
+    private readonly record struct MissingAssetRequest(string OriginalPath, string AssetBasePath, string? ProvidedExtension);
 }
 
 public class MissingAssetExtractionResult
@@ -328,4 +486,33 @@ public class MissingAssetExtractionResult
     public string Message { get; }
 
     public string Status => Success ? "Success" : "Failed";
+}
+
+public class FileExtensionOption
+{
+    public FileExtensionOption(string displayName, IEnumerable<string> extensions)
+    {
+        DisplayName = displayName;
+        Extensions = extensions?
+                         .Select(NormalizeExtension)
+                         .Where(extension => !string.IsNullOrWhiteSpace(extension))
+                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                         .ToArray()
+                     ?? Array.Empty<string>();
+    }
+
+    public string DisplayName { get; }
+    public IReadOnlyList<string> Extensions { get; }
+    public string Description => Extensions.Count == 0 ? "No extensions configured." : string.Join(", ", Extensions);
+
+    private static string NormalizeExtension(string extension)
+    {
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = extension.Trim();
+        return trimmed.StartsWith(".", StringComparison.Ordinal) ? trimmed : $".{trimmed}";
+    }
 }
