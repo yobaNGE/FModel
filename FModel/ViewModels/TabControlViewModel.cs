@@ -3,6 +3,7 @@ using FModel.Extensions;
 using FModel.Framework;
 using FModel.Settings;
 using FModel.ViewModels.Commands;
+using FModel.ViewModels.LowLevel;
 using FModel.Views.Resources.Controls;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Highlighting;
@@ -203,6 +204,36 @@ public class TabItem : ViewModel
         set => SetProperty(ref _document, value);
     }
 
+    private bool _isLowLevelView;
+    public bool IsLowLevelView
+    {
+        get => _isLowLevelView;
+        set
+        {
+            if (!SetProperty(ref _isLowLevelView, value))
+                return;
+            RaisePropertyChanged(nameof(ShowLowLevelViewer));
+            RaisePropertyChanged(nameof(ShowTextEditor));
+        }
+    }
+
+    public bool ShowLowLevelViewer => IsLowLevelView;
+    public bool ShowTextEditor => !IsLowLevelView;
+
+    private LowLevelPackageData _lowLevelData;
+    public LowLevelPackageData LowLevelData
+    {
+        get => _lowLevelData;
+        set => SetProperty(ref _lowLevelData, value);
+    }
+
+    private bool _lowLevelAutoSyncHex = true;
+    public bool LowLevelAutoSyncHex
+    {
+        get => _lowLevelAutoSyncHex;
+        set => SetProperty(ref _lowLevelAutoSyncHex, value);
+    }
+
     private double _fontSize = 11.0;
     public double FontSize
     {
@@ -277,6 +308,9 @@ public class TabItem : ViewModel
         Entry = entry;
         TitleExtra = string.Empty;
         ParentExportType = string.Empty;
+        IsLowLevelView = false;
+        LowLevelData = null;
+        LowLevelAutoSyncHex = true;
         ScrollTrigger = null;
         Application.Current.Dispatcher.Invoke(() =>
         {

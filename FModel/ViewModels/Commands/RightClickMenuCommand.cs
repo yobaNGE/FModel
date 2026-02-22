@@ -52,6 +52,14 @@ public class RightClickMenuCommand : ViewModelCommand<ApplicationViewModel>
                         contextViewModel.CUE4Parse.Decompile(entry);
                     }
                     break;
+                case "Assets_Decompile_LowLevel":
+                    foreach (var entry in entries)
+                    {
+                        Thread.Yield();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        contextViewModel.CUE4Parse.DecompileLowLevel(entry);
+                    }
+                    break;
                 case "Assets_Export_Data":
                     foreach (var entry in entries)
                     {

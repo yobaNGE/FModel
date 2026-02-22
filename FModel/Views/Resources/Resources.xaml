@@ -680,7 +680,13 @@
                             <ColumnDefinition Width="{Binding AvalonImageSize, Source={x:Static settings:UserSettings.Default}, Mode=TwoWay}" />
                         </Grid.ColumnDefinitions>
 
-                        <controls:AvalonEditor x:Name="DynamicArea" Grid.Column="0" DataContext="{Binding SelectedItem, ElementName=TabControlName}" />
+                        <Grid x:Name="ContentHost" Grid.Column="0">
+                            <controls:AvalonEditor x:Name="DynamicArea"
+                                                   DataContext="{Binding SelectedItem, ElementName=TabControlName}"
+                                                   Visibility="{Binding SelectedItem.ShowTextEditor, ElementName=TabControlName, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <controls:LowLevelViewer DataContext="{Binding SelectedItem, ElementName=TabControlName}"
+                                                     Visibility="{Binding SelectedItem.ShowLowLevelViewer, ElementName=TabControlName, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        </Grid>
                         <GridSplitter Grid.Column="1" Width="4" VerticalAlignment="Stretch" ResizeDirection="Columns" KeyboardIncrement="0"
                                       Visibility="{Binding SelectedItem.HasImage, ElementName=TabControlName, Converter={StaticResource BoolToVisibilityConverter}}"
                                       Background="{DynamicResource {x:Static adonisUi:Brushes.Layer3BackgroundBrush}}" />
@@ -734,7 +740,7 @@
                     </Grid>
                     <DataTemplate.Triggers>
                         <DataTrigger Binding="{Binding SelectedItem.HasImage, ElementName=TabControlName}" Value="False">
-                            <Setter TargetName="DynamicArea" Property="Grid.ColumnSpan" Value="3" />
+                            <Setter TargetName="ContentHost" Property="Grid.ColumnSpan" Value="3" />
                         </DataTrigger>
                     </DataTemplate.Triggers>
                 </DataTemplate>

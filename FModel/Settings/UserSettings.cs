@@ -266,6 +266,13 @@ namespace FModel.Settings
             set => SetProperty(ref _readShaderMaps, value);
         }
 
+        private Dictionary<string, Dictionary<string, bool>> _lowLevelColumnVisibility = new();
+        public Dictionary<string, Dictionary<string, bool>> LowLevelColumnVisibility
+        {
+            get => _lowLevelColumnVisibility;
+            set => SetProperty(ref _lowLevelColumnVisibility, value ?? new Dictionary<string, Dictionary<string, bool>>());
+        }
+
         private IDictionary<string, DirectorySettings> _perDirectory = new Dictionary<string, DirectorySettings>();
         public IDictionary<string, DirectorySettings> PerDirectory
         {
